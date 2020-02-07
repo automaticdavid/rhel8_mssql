@@ -118,16 +118,6 @@
     var: sql_sa_password
     verbosity: 2
 
-- name: Record needed facts from the newly provisioned infrastructure
-  set_fact:
-    eap_facts: 
-      db_name: "{{ db_name }}"
-      db_password:  "{{ sql_sa_password }}"
-      db_user: "{{ db_user }}"
-  delegate_to: fact_store
-  delegate_facts: yes
-  run_once: yes
-
 - name: Create custom fact directory
   file:
     path: "/etc/ansible/facts.d"
