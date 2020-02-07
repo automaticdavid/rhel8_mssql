@@ -1,0 +1,152 @@
+- name: Include JBOSS common tasks
+  include_tasks: common.yml
+
+- name: Install firewalld
+  yum:
+    name: firewalld
+    state: latest
+
+- name: Start firewall service
+  systemd: 
+    name: firewalld 
+    masked: no  
+    enabled: yes
+    state: started
+
+- name: Configure firewall for MS-SQL
+  firewalld:
+    port: "{{ item }}/tcp"
+    permanent: true
+    state: enabled
+    immediate: true
+  with_items: 
+    - 1433
+
+- name: Restart firewall service
+  systemd: 
+    name: firewalld 
+    masked: no  
+    enabled: yes
+    state: restarted
+
+- name: Setup the MS-SQL Repository
+  yum_repository:
+    name: packages-microsoft-com-mssql-server-2019
+    description: microsoft.com mssql-server-2019
+    file: external_repos
+    baseurl: https://packages.microsoft.com/rhel/8/mssql-server-2019/
+    gpgcheck: yes
+    gpgkey: https://packages.microsoft.com/keys/microsoft.asc
+    enabled: yes
+
+- name: Install MS-SQL
+  yum:
+    name: mssql-server
+    state: latest
+    
+- name: Setup the MS-SQL Tools Repository
+  yum_repository:
+    name: packages-microsoft-com-prod
+    description: microsoft.com packages prod
+    file: external_repos
+    baseurl: https://packages.microsoft.com/rhel/8/prod/
+    gpgcheck: yes
+    gpgkey: https://packages.microsoft.com/keys/microsoft.asc
+    enabled: yes
+
+- name: Install MS-SQL utilities 
+  yum:
+    name: "{{ packages }}"
+  vars:
+    packages:
+    - mssql-tools 
+    - unixODBC-devel
+  environment:
+    ACCEPT_EULA: 'y'
+  
+- name: Generate SA password
+  set_fact:
+    sql_sa_password: "Aut0-{{ lookup('password', '/dev/null chars=ascii_letters,digits,hexdigits') }}"
+  no_log: True
+
+- name: Check MS-SQL Configuration
+  command: /opt/mssql/bin/mssql-conf validate
+  register: sql_configured
+  changed_when: False 
+  environment:
+      MSSQL_SA_PASSWORD: "{{ sql_sa_password }}"
+      MSSQL_PID: express 
+  no_log: True
+  
+- name: Stop MS-SQL
+  systemd:
+    name: mssql-server
+    state: stopped
+
+- name: Run MS-SQL Configuration
+  command:  /opt/mssql/bin/mssql-conf -n setup accept-eula
+  when: sql_configured != 0
+  environment:
+      MSSQL_SA_PASSWORD: "{{ sql_sa_password }}"
+      MSSQL_PID: express
+  no_log: False 
+
+- name: Start MS-SQL
+  systemd:
+    name: mssql-server
+    state: started
+
+- name: List DBs
+  command:  /opt/mssql-tools/bin/sqlcmd -S localhost -U SA -P {{ sql_sa_password | quote }} -Q 'SELECT Name from sys.Databases;' 
+  register: sql_db_list
+  changed_when: False 
+  until: sql_db_list.rc == 0
+  retries: 5
+  delay: 10
+
+- name: Check if monolith DB is present
+  set_fact: 
+    monolith_defined: "{{ sql_db_list.stdout_lines | select('match', db_name) | list }}"
+  no_log: True
+
+- name: Create the monolith DB if needed
+  command: /opt/mssql-tools/bin/sqlcmd -S localhost -U SA -P {{ sql_sa_password | quote }} -Q 'CREATE DATABASE {{ db_name | quote }};' 
+  when: monolith_defined.0 is not defined
+
+- name: Display SA Password
+  debug:
+    var: sql_sa_password
+    verbosity: 2
+
+- name: Record needed facts from the newly provisioned infrastructure
+  set_fact:
+    eap_facts: 
+      db_name: "{{ db_name }}"
+      db_password:  "{{ sql_sa_password }}"
+      db_user: "{{ db_user }}"
+  delegate_to: fact_store
+  delegate_facts: yes
+  run_once: yes
+
+- name: Create custom fact directory
+  file:
+    path: "/etc/ansible/facts.d"
+    state: "directory"
+
+- name: Create the mssql local fact 
+  template:
+    src: templates/mssql.fact.j2
+    dest: "/etc/ansible/facts.d/{{ inventory_hostname }}.fact" 
+    
+# - name: Configure MSSQL for Hashicorp Vault 
+#   include_role:
+#     name: hc_mssql
+#     tasks_from: mssql.yml
+#   vars:
+#     mssql_username: "{{ db_user }}"
+#     mssql_password: "{{ db_password }}"
+#     mssql_db: "{{ db_name }}"
+
+
+
+

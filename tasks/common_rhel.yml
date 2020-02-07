@@ -1,0 +1,10 @@
+
+- name: Subscribe the host
+  redhat_subscription:
+    state: present
+    username: "{{ rhn_username }}"
+    password: "{{ rhn_password }}"
+    autosubscribe: no
+    pool_ids: "{{ rh_poolid }}"
+  when: rhsm_subscribe_host|bool
+  ignore_errors: yes
