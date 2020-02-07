@@ -1,5 +1,3 @@
-- name: Include JBOSS common tasks
-  include_tasks: common.yml
 
 - name: Install firewalld
   yum:
